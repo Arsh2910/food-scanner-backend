@@ -5,52 +5,71 @@ const router = express.Router();
 const User = require("../models/User");
 
 router.post("/register", async (req, res) => {
-  console.log("REGISTER ROUTE HIT");
-
   try {
-    const { email, password, diet, allergies, avoid } = req.body;
+    const { email, password } = req.body;
 
-    const existingUser = await User.findOne({ email });
+    if (!email || !password) {
+      return res.status(400).json({
+        success: false,
+        message: "Email and password are required",
+      });
+    }
+
+    const normalizedEmail = email.toLowerCase();
+
+    const existingUser = await User.findOne({ email: normalizedEmail });
     if (existingUser) {
-      return res.status(400).json({ message: "User already exists" });
+      return res.status(400).json({
+        success: false,
+        message: "User already exists",
+      });
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    const user = await User.create({
-      email,
+    await User.create({
+      email: normalizedEmail,
       password: hashedPassword,
-      diet,
-      allergies,
-      avoid,
     });
 
-    res.status(201).json(user);
+    res.status(201).json({
+      success: true,
+      message: "User registered successfully",
+    });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 });
 
 router.post("/login", async (req, res) => {
-  console.log("LOGIN ROUTE HIT");
-
   try {
     const { email, password } = req.body;
 
-    console.log("Email received:", email);
+    if (!email || !password) {
+      return res.status(400).json({
+        success: false,
+        message: "Email and password required",
+      });
+    }
 
-    const user = await User.findOne({ email });
-    console.log("User found:", user);
+    const user = await User.findOne({ email: email.toLowerCase() }).select(
+      "+password",
+    );
 
     if (!user) {
-      return res.status(400).json({ message: "Invalid credentials" });
+      return res.status(400).json({
+        success: false,
+        message: "Invalid credentials",
+      });
     }
 
     const isMatch = await bcrypt.compare(password, user.password);
-    console.log("Password match:", isMatch);
 
     if (!isMatch) {
-      return res.status(400).json({ message: "Invalid credentials" });
+      return res.status(400).json({
+        success: false,
+        message: "Invalid credentials",
+      });
     }
 
     const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, {
@@ -58,17 +77,73 @@ router.post("/login", async (req, res) => {
     });
 
     res.json({
+      success: true,
       token,
-      userId: user._id,
     });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 });
-router.get("/", async (req, res) => {
+
+const protect = require("../middleware/authMiddleware");
+
+router.get("/profile", protect, async (req, res) => {
   try {
-    const users = await User.find();
-    res.json(users);
+    const user = await User.findById(req.user).select("-password");
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    res.json({
+      success: true,
+      profile: {
+        email: user.email,
+        diet: user.diet,
+        allergies: user.allergies,
+        avoid: user.avoid,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+router.put("/profile", protect, async (req, res) => {
+  try {
+    const { diet, allergies, avoid } = req.body;
+
+    const user = await User.findById(req.user);
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    if (diet !== undefined) user.diet = diet;
+
+    if (allergies !== undefined) {
+      if (!Array.isArray(allergies)) {
+        return res.status(400).json({
+          message: "Allergies must be an array",
+        });
+      }
+      user.allergies = allergies.map((a) => a.toLowerCase());
+    }
+
+    if (avoid !== undefined) {
+      if (!Array.isArray(avoid)) {
+        return res.status(400).json({
+          message: "Avoid must be an array",
+        });
+      }
+      user.avoid = avoid.map((a) => a.toLowerCase());
+    }
+
+    await user.save();
+
+    res.json({
+      success: true,
+      message: "Profile updated successfully",
+    });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
