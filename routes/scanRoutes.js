@@ -54,7 +54,18 @@ Return ONLY valid JSON in this format:
     const response = await result.response;
     const text = response.text();
 
-    const parsed = JSON.parse(text);
+    const cleaned = text
+      .replace(/```json/gi, "")
+      .replace(/```/g, "")
+      .trim();
+
+    // Optional: extract JSON if Gemini adds extra explanation
+    const firstBrace = cleaned.indexOf("{");
+    const lastBrace = cleaned.lastIndexOf("}");
+
+    const jsonString = cleaned.substring(firstBrace, lastBrace + 1);
+
+    const parsed = JSON.parse(jsonString);
 
     res.json(parsed);
   } catch (error) {
