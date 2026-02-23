@@ -99,6 +99,7 @@ router.get("/profile", protect, async (req, res) => {
       profile: {
         email: user.email,
         age: user.age,
+        name: user.name,
         gender: user.gender,
         diet: user.diet,
         allergies: user.allergies,
@@ -114,7 +115,7 @@ router.get("/profile", protect, async (req, res) => {
 
 router.put("/profile", protect, async (req, res) => {
   try {
-    const { age, gender, diet, allergies, avoid, healthIssues, likes } =
+    const { name, age, gender, diet, allergies, avoid, healthIssues, likes } =
       req.body;
 
     const user = await User.findById(req.user);
@@ -123,6 +124,7 @@ router.put("/profile", protect, async (req, res) => {
       return res.status(404).json({ message: "User not found" });
     }
 
+    if (name !== undefined) user.name = name;
     if (age !== undefined) user.age = age;
     if (gender !== undefined) user.gender = gender;
     if (diet !== undefined) user.diet = diet;
