@@ -3,6 +3,7 @@ const jwt = require("jsonwebtoken");
 const express = require("express");
 const router = express.Router();
 const User = require("../models/User");
+const protect = require("../middleware/authMiddleware");
 
 router.post("/register", async (req, res) => {
   try {
@@ -85,8 +86,6 @@ router.post("/login", async (req, res) => {
   }
 });
 
-const protect = require("../middleware/authMiddleware");
-
 router.get("/profile", protect, async (req, res) => {
   try {
     const user = await User.findById(req.user).select("-password");
@@ -99,18 +98,24 @@ router.get("/profile", protect, async (req, res) => {
       success: true,
       profile: {
         email: user.email,
+        age: user.age,
+        gender: user.gender,
         diet: user.diet,
         allergies: user.allergies,
         avoid: user.avoid,
+        healthIssues: user.healthIssues,
+        likes: user.likes,
       },
     });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 });
+
 router.put("/profile", protect, async (req, res) => {
   try {
-    const { diet, allergies, avoid } = req.body;
+    const { age, gender, diet, allergies, avoid, healthIssues, likes } =
+      req.body;
 
     const user = await User.findById(req.user);
 
@@ -118,25 +123,41 @@ router.put("/profile", protect, async (req, res) => {
       return res.status(404).json({ message: "User not found" });
     }
 
+    if (age !== undefined) user.age = age;
+    if (gender !== undefined) user.gender = gender;
     if (diet !== undefined) user.diet = diet;
 
     if (allergies !== undefined) {
       if (!Array.isArray(allergies)) {
-        return res.status(400).json({
-          message: "Allergies must be an array",
-        });
+        return res.status(400).json({ message: "Allergies must be an array" });
       }
       user.allergies = allergies.map((a) => a.toLowerCase());
     }
 
     if (avoid !== undefined) {
       if (!Array.isArray(avoid)) {
-        return res.status(400).json({
-          message: "Avoid must be an array",
-        });
+        return res.status(400).json({ message: "Avoid must be an array" });
       }
       user.avoid = avoid.map((a) => a.toLowerCase());
     }
+
+    if (healthIssues !== undefined) {
+      if (!Array.isArray(healthIssues)) {
+        return res
+          .status(400)
+          .json({ message: "Health issues must be an array" });
+      }
+      user.healthIssues = healthIssues.map((h) => h.toLowerCase());
+    }
+
+    if (likes !== undefined) {
+      if (!Array.isArray(likes)) {
+        return res.status(400).json({ message: "Likes must be an array" });
+      }
+      user.likes = likes.map((l) => l.toLowerCase());
+    }
+
+    user.preferencesCompleted = true;
 
     await user.save();
 
@@ -148,4 +169,5 @@ router.put("/profile", protect, async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 });
+
 module.exports = router;
