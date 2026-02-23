@@ -2,11 +2,9 @@ const protect = require("../middleware/authMiddleware");
 const express = require("express");
 const router = express.Router();
 const User = require("../models/User");
-const OpenAI = require("openai");
+const { GoogleGenerativeAI } = require("@google/generative-ai");
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 router.post("/", protect, async (req, res) => {
   try {
@@ -24,6 +22,8 @@ router.post("/", protect, async (req, res) => {
     if (!user) {
       return res.status(404).json({ message: "User not found" });
     }
+
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
     const prompt = `
 You are a food safety analysis system.
@@ -50,28 +50,18 @@ Return ONLY valid JSON in this format:
 }
 `;
 
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
-        {
-          role: "system",
-          content: "You are a professional food safety analyzer.",
-        },
-        { role: "user", content: prompt },
-      ],
-      temperature: 0.2,
-    });
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    const text = response.text();
 
-    const aiText = completion.choices[0].message.content;
-
-    const parsed = JSON.parse(aiText);
+    const parsed = JSON.parse(text);
 
     res.json(parsed);
   } catch (error) {
     console.error(error);
     res.status(500).json({
       success: false,
-      message: "AI analysis failed",
+      message: "Gemini analysis failed",
     });
   }
 });
