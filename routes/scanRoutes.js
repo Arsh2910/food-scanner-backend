@@ -2,13 +2,16 @@ const protect = require("../middleware/authMiddleware");
 const express = require("express");
 const router = express.Router();
 const User = require("../models/User");
-const Ingredient = require("../models/Ingredient");
+const OpenAI = require("openai");
+
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
 
 router.post("/", protect, async (req, res) => {
   try {
     const { ingredients } = req.body;
 
-    // ✅ Validate input
     if (!ingredients || !Array.isArray(ingredients)) {
       return res.status(400).json({
         success: false,
@@ -17,49 +20,59 @@ router.post("/", protect, async (req, res) => {
     }
 
     const user = await User.findById(req.user);
+
     if (!user) {
       return res.status(404).json({ message: "User not found" });
     }
 
-    let issues = [];
+    const prompt = `
+You are a food safety analysis system.
 
-    for (let rawItem of ingredients) {
-      const item = rawItem.toLowerCase().trim();
+User Profile:
+Age: ${user.age}
+Gender: ${user.gender}
+Diet: ${user.diet}
+Allergies: ${user.allergies.join(", ")}
+Avoid: ${user.avoid.join(", ")}
+Health Issues: ${user.healthIssues.join(", ")}
 
-      const ingredient = await Ingredient.findOne({
-        name: item,
-      });
+Ingredients:
+${ingredients.join(", ")}
 
-      if (!ingredient) {
-        issues.push(`Unknown ingredient: ${item}`);
-        continue;
-      }
+Analyze these ingredients for this user.
 
-      // 🔎 Check allergens
-      ingredient.allergens.forEach((allergen) => {
-        if (user.allergies.includes(allergen)) {
-          issues.push(`Contains allergen: ${allergen}`);
-        }
-      });
+Return ONLY valid JSON in this format:
 
-      // 🌱 Vegan check
-      if (user.diet === "vegan" && ingredient.vegan === false) {
-        issues.push(`Not vegan: ${ingredient.name}`);
-      }
+{
+  "safe": true or false,
+  "issues": [],
+  "summary": ""
+}
+`;
 
-      // 🚫 Avoid list check
-      if (user.avoid.includes(ingredient.name)) {
-        issues.push(`Avoid ingredient: ${ingredient.name}`);
-      }
-    }
-
-    res.json({
-      success: true,
-      safe: issues.length === 0,
-      issues,
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [
+        {
+          role: "system",
+          content: "You are a professional food safety analyzer.",
+        },
+        { role: "user", content: prompt },
+      ],
+      temperature: 0.2,
     });
+
+    const aiText = completion.choices[0].message.content;
+
+    const parsed = JSON.parse(aiText);
+
+    res.json(parsed);
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    console.error(error);
+    res.status(500).json({
+      success: false,
+      message: "AI analysis failed",
+    });
   }
 });
 
