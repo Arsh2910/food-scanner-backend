@@ -1,122 +1,21 @@
-const bcrypt = require("bcryptjs");
-const jwt = require("jsonwebtoken");
+const protect = require("../middleware/authMiddleware");
 const express = require("express");
 const router = express.Router();
 const User = require("../models/User");
-const protect = require("../middleware/authMiddleware");
+const { GoogleGenerativeAI } = require("@google/generative-ai");
 
-router.post("/register", async (req, res) => {
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+
+router.post("/", protect, async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { ingredients } = req.body;
 
-    if (!email || !password) {
+    if (!ingredients || !Array.isArray(ingredients)) {
       return res.status(400).json({
         success: false,
-        message: "Email and password are required",
+        message: "Ingredients must be an array",
       });
     }
-
-    const normalizedEmail = email.toLowerCase();
-
-    const existingUser = await User.findOne({ email: normalizedEmail });
-    if (existingUser) {
-      return res.status(400).json({
-        success: false,
-        message: "User already exists",
-      });
-    }
-
-    const hashedPassword = await bcrypt.hash(password, 10);
-
-    await User.create({
-      email: normalizedEmail,
-      password: hashedPassword,
-    });
-
-    res.status(201).json({
-      success: true,
-      message: "User registered successfully",
-    });
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
-});
-
-router.post("/login", async (req, res) => {
-  try {
-    const { email, password } = req.body;
-
-    if (!email || !password) {
-      return res.status(400).json({
-        success: false,
-        message: "Email and password required",
-      });
-    }
-
-    const user = await User.findOne({ email: email.toLowerCase() }).select(
-      "+password",
-    );
-
-    if (!user) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid credentials",
-      });
-    }
-
-    const isMatch = await bcrypt.compare(password, user.password);
-
-    if (!isMatch) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid credentials",
-      });
-    }
-
-    const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, {
-      expiresIn: "1h",
-    });
-
-    res.json({
-      success: true,
-      token,
-    });
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
-});
-
-router.get("/profile", protect, async (req, res) => {
-  try {
-    const user = await User.findById(req.user).select("-password");
-
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
-    }
-
-    res.json({
-      success: true,
-      profile: {
-        email: user.email,
-        age: user.age,
-        name: user.name,
-        gender: user.gender,
-        diet: user.diet,
-        allergies: user.allergies,
-        avoid: user.avoid,
-        healthIssues: user.healthIssues,
-        likes: user.likes,
-      },
-    });
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
-});
-
-router.put("/profile", protect, async (req, res) => {
-  try {
-    const { name, age, gender, diet, allergies, avoid, healthIssues, likes } =
-      req.body;
 
     const user = await User.findById(req.user);
 
@@ -124,51 +23,46 @@ router.put("/profile", protect, async (req, res) => {
       return res.status(404).json({ message: "User not found" });
     }
 
-    if (name !== undefined) user.name = name;
-    if (age !== undefined) user.age = age;
-    if (gender !== undefined) user.gender = gender;
-    if (diet !== undefined) user.diet = diet;
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
-    if (allergies !== undefined) {
-      if (!Array.isArray(allergies)) {
-        return res.status(400).json({ message: "Allergies must be an array" });
-      }
-      user.allergies = allergies.map((a) => a.toLowerCase());
-    }
+    const prompt = `
+You are a food safety analysis system.
 
-    if (avoid !== undefined) {
-      if (!Array.isArray(avoid)) {
-        return res.status(400).json({ message: "Avoid must be an array" });
-      }
-      user.avoid = avoid.map((a) => a.toLowerCase());
-    }
+User Profile:
+Age: ${user.age}
+Gender: ${user.gender}
+Diet: ${user.diet}
+Allergies: ${user.allergies.join(", ")}
+Avoid: ${user.avoid.join(", ")}
+Health Issues: ${user.healthIssues.join(", ")}
 
-    if (healthIssues !== undefined) {
-      if (!Array.isArray(healthIssues)) {
-        return res
-          .status(400)
-          .json({ message: "Health issues must be an array" });
-      }
-      user.healthIssues = healthIssues.map((h) => h.toLowerCase());
-    }
+Ingredients:
+${ingredients.join(", ")}
 
-    if (likes !== undefined) {
-      if (!Array.isArray(likes)) {
-        return res.status(400).json({ message: "Likes must be an array" });
-      }
-      user.likes = likes.map((l) => l.toLowerCase());
-    }
+Analyze these ingredients for this user.
 
-    user.preferencesCompleted = true;
+Return ONLY valid JSON in this format:
 
-    await user.save();
+{
+  "safe": true or false,
+  "issues": [],
+  "summary": ""
+}
+`;
 
-    res.json({
-      success: true,
-      message: "Profile updated successfully",
-    });
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    const text = response.text();
+
+    const parsed = JSON.parse(text);
+
+    res.json(parsed);
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    console.error(error);
+    res.status(500).json({
+      success: false,
+      message: "Gemini analysis failed",
+    });
   }
 });
 
