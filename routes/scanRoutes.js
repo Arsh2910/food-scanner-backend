@@ -3,7 +3,6 @@ const express = require("express");
 const router = express.Router();
 const User = require("../models/User");
 const Scan = require("../models/Scan");
-
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
@@ -25,7 +24,9 @@ router.post("/", protect, async (req, res) => {
       return res.status(404).json({ message: "User not found" });
     }
 
-    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+    const model = genAI.getGenerativeModel({
+      model: "gemini-2.5-flash",
+    });
 
     const prompt = `
 You are a food safety analysis system.
@@ -42,9 +43,13 @@ Ingredients:
 ${ingredients.join(", ")}
 
 Analyze these ingredients for this user.
-If the product is unsafe, suggest 3 SAFER ALTERNATIVE BRANDS of the same product type.
 
-Only suggest real-world branded products.
+If the product is unsafe, suggest 3 SAFER REAL-WORLD BRANDED ALTERNATIVES of the same product type.
+
+IMPORTANT:
+- Do NOT wrap the JSON in markdown.
+- Do NOT include explanations outside JSON.
+- Return RAW JSON only.
 
 Return ONLY valid JSON in this format:
 
@@ -61,31 +66,33 @@ Return ONLY valid JSON in this format:
   ],
   "summary": ""
 }
-
 `;
 
     const result = await model.generateContent(prompt);
     const response = await result.response;
     const text = response.text();
 
-    const cleaned = text
-      .replace(/```json/gi, "")
-      .replace(/```/g, "")
-      .trim();
-
-    // Optional: extract JSON if Gemini adds extra explanation
-    const match = cleaned.match(/\{[\s\S]*\}/);
-
-    if (!match) {
-      return res.status(500).json({
-        success: false,
-        message: "AI did not return valid JSON structure",
-      });
-    }
-
-    const jsonString = match[0];
     console.log("RAW AI RESPONSE:");
     console.log(text);
+
+    // 🔥 Extract JSON safely (handles markdown + extra text)
+    const match = text.match(/```json\s*([\s\S]*?)\s*```/i);
+
+    let jsonString;
+
+    if (match) {
+      jsonString = match[1];
+    } else {
+      const fallback = text.match(/\{[\s\S]*\}/);
+      if (!fallback) {
+        return res.status(500).json({
+          success: false,
+          message: "AI did not return valid JSON structure",
+        });
+      }
+      jsonString = fallback[0];
+    }
+
     let parsed;
 
     try {
@@ -96,10 +103,26 @@ Return ONLY valid JSON in this format:
         message: "Invalid AI response format",
       });
     }
-    // Default from AI
-    let finalRisk = parsed.riskLevel || "low";
 
-    // If any issue contains user allergy → HIGH
+    // 🔥 Normalize AI output (never trust AI structure blindly)
+    parsed.safe = typeof parsed.safe === "boolean" ? parsed.safe : false;
+
+    parsed.confidence =
+      typeof parsed.confidence === "number" ? parsed.confidence : 50;
+
+    parsed.issues = Array.isArray(parsed.issues) ? parsed.issues : [];
+
+    parsed.alternatives = Array.isArray(parsed.alternatives)
+      ? parsed.alternatives
+      : [];
+
+    parsed.riskLevel = ["low", "medium", "high"].includes(parsed.riskLevel)
+      ? parsed.riskLevel
+      : "low";
+
+    // 🔥 Backend Risk Override Logic
+    let finalRisk = parsed.riskLevel;
+
     const issuesText = parsed.issues.join(" ").toLowerCase();
 
     const allergyMatch = user.allergies.some((allergy) =>
@@ -108,15 +131,15 @@ Return ONLY valid JSON in this format:
 
     if (allergyMatch) {
       finalRisk = "high";
-    }
-
-    // If safe false but no allergy → medium
-    if (!parsed.safe && !allergyMatch) {
+    } else if (!parsed.safe) {
       finalRisk = "medium";
     }
 
     parsed.riskLevel = finalRisk;
 
+    console.log("FINAL PARSED RESULT:", parsed);
+
+    // 🔥 Save scan history
     await Scan.create({
       user: user._id,
       ingredients,
@@ -125,25 +148,29 @@ Return ONLY valid JSON in this format:
 
     res.json(parsed);
   } catch (error) {
-    console.error(error);
+    console.error("SCAN ERROR:", error);
     res.status(500).json({
       success: false,
       message: "Gemini analysis failed",
     });
   }
 });
+
+// 🔥 History Endpoint
 router.get("/history", protect, async (req, res) => {
   try {
-    const scans = await Scan.find({ user: req.user }).sort({
-      createdAt: -1,
-    });
+    const scans = await Scan.find({ user: req.user }).sort({ createdAt: -1 });
 
     res.json({
       success: true,
       history: scans,
     });
   } catch (error) {
-    res.status(500).json({ message: "Failed to fetch history" });
+    console.error("HISTORY ERROR:", error);
+    res.status(500).json({
+      message: "Failed to fetch history",
+    });
   }
 });
+
 module.exports = router;
