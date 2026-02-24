@@ -78,7 +78,8 @@ Return ONLY valid JSON in this format:
     const lastBrace = cleaned.lastIndexOf("}");
 
     const jsonString = cleaned.substring(firstBrace, lastBrace + 1);
-
+    console.log("RAW AI RESPONSE:");
+    console.log(text);
     let parsed;
 
     try {
