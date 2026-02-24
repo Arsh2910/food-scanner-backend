@@ -2,6 +2,8 @@ const protect = require("../middleware/authMiddleware");
 const express = require("express");
 const router = express.Router();
 const User = require("../models/User");
+const Scan = require("../models/Scan");
+
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
@@ -40,14 +42,26 @@ Ingredients:
 ${ingredients.join(", ")}
 
 Analyze these ingredients for this user.
+If the product is unsafe, suggest 3 SAFER ALTERNATIVE BRANDS of the same product type.
+
+Only suggest real-world branded products.
 
 Return ONLY valid JSON in this format:
 
 {
   "safe": true or false,
+  "riskLevel": "low" | "medium" | "high",
+  "confidence": number between 0 and 100,
   "issues": [],
+  "alternatives": [
+    {
+      "productName": "",
+      "reason": ""
+    }
+  ],
   "summary": ""
 }
+
 `;
 
     const result = await model.generateContent(prompt);
@@ -65,7 +79,42 @@ Return ONLY valid JSON in this format:
 
     const jsonString = cleaned.substring(firstBrace, lastBrace + 1);
 
-    const parsed = JSON.parse(jsonString);
+    let parsed;
+
+    try {
+      parsed = JSON.parse(jsonString);
+    } catch (err) {
+      return res.status(500).json({
+        success: false,
+        message: "Invalid AI response format",
+      });
+    }
+    // Default from AI
+    let finalRisk = parsed.riskLevel || "low";
+
+    // If any issue contains user allergy → HIGH
+    const issuesText = parsed.issues.join(" ").toLowerCase();
+
+    const allergyMatch = user.allergies.some((allergy) =>
+      issuesText.includes(allergy.toLowerCase()),
+    );
+
+    if (allergyMatch) {
+      finalRisk = "high";
+    }
+
+    // If safe false but no allergy → medium
+    if (!parsed.safe && !allergyMatch) {
+      finalRisk = "medium";
+    }
+
+    parsed.riskLevel = finalRisk;
+
+    await Scan.create({
+      user: user._id,
+      ingredients,
+      result: parsed,
+    });
 
     res.json(parsed);
   } catch (error) {
@@ -76,5 +125,18 @@ Return ONLY valid JSON in this format:
     });
   }
 });
+router.get("/history", protect, async (req, res) => {
+  try {
+    const scans = await Scan.find({ user: req.user }).sort({
+      createdAt: -1,
+    });
 
+    res.json({
+      success: true,
+      history: scans,
+    });
+  } catch (error) {
+    res.status(500).json({ message: "Failed to fetch history" });
+  }
+});
 module.exports = router;
