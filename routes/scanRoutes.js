@@ -55,13 +55,15 @@ Return ONLY valid JSON in this format:
 
 {
   "safe": true or false,
-  "riskLevel": "low" | "medium" | "high",
-  "confidence": number between 0 and 100,
+  "riskScore": 0-100,
+  "severity": "low | medium | high | critical",
   "issues": [],
+  "healthImpact": "",
   "alternatives": [
     {
-      "productName": "",
-      "reason": ""
+      "name": "",
+      "reason": "",
+      "searchLink": ""
     }
   ],
   "summary": ""
