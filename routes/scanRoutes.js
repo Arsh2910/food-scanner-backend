@@ -74,10 +74,16 @@ Return ONLY valid JSON in this format:
       .trim();
 
     // Optional: extract JSON if Gemini adds extra explanation
-    const firstBrace = cleaned.indexOf("{");
-    const lastBrace = cleaned.lastIndexOf("}");
+    const match = cleaned.match(/\{[\s\S]*\}/);
 
-    const jsonString = cleaned.substring(firstBrace, lastBrace + 1);
+    if (!match) {
+      return res.status(500).json({
+        success: false,
+        message: "AI did not return valid JSON structure",
+      });
+    }
+
+    const jsonString = match[0];
     console.log("RAW AI RESPONSE:");
     console.log(text);
     let parsed;
