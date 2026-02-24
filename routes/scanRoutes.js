@@ -19,7 +19,6 @@ router.post("/", protect, async (req, res) => {
     }
 
     const user = await User.findById(req.user);
-
     if (!user) {
       return res.status(404).json({ message: "User not found" });
     }
@@ -79,7 +78,7 @@ Return JSON in this format:
 
     console.log("RAW AI RESPONSE:", text);
 
-    // Extract JSON safely
+    // 🔥 Extract JSON safely
     let jsonString;
 
     const markdownMatch = text.match(/```json\s*([\s\S]*?)\s*```/i);
@@ -108,17 +107,11 @@ Return JSON in this format:
       });
     }
 
-    // 🔥 Normalize output safely
+    // 🔥 Normalize basic fields
     parsed.safe = typeof parsed.safe === "boolean" ? parsed.safe : false;
 
     parsed.riskScore =
       typeof parsed.riskScore === "number" ? parsed.riskScore : 50;
-
-    parsed.issues = Array.isArray(parsed.issues) ? parsed.issues : [];
-
-    parsed.alternatives = Array.isArray(parsed.alternatives)
-      ? parsed.alternatives
-      : [];
 
     parsed.severity = ["low", "medium", "high", "critical"].includes(
       parsed.severity,
@@ -126,13 +119,39 @@ Return JSON in this format:
       ? parsed.severity
       : "low";
 
+    parsed.issues = Array.isArray(parsed.issues) ? parsed.issues : [];
+
+    parsed.alternatives = Array.isArray(parsed.alternatives)
+      ? parsed.alternatives
+      : [];
+
     parsed.healthImpact =
       typeof parsed.healthImpact === "string" ? parsed.healthImpact : "";
 
     parsed.summary = typeof parsed.summary === "string" ? parsed.summary : "";
 
+    // 🔥 Normalize issues into structured format FIRST
+    parsed.issues = parsed.issues.map((issue) => {
+      if (typeof issue === "string") {
+        return {
+          type: "General",
+          item: "Unknown",
+          reason: issue,
+        };
+      }
+
+      return {
+        type: issue.type || "General",
+        item: issue.item || "Unknown",
+        reason: issue.reason || "No reason provided",
+      };
+    });
+
     // 🔥 Backend Severity Override Logic
-    const issuesText = parsed.issues.join(" ").toLowerCase();
+    const issuesText = parsed.issues
+      .map((i) => i.reason)
+      .join(" ")
+      .toLowerCase();
 
     const allergyMatch = user.allergies.some((allergy) =>
       issuesText.includes(allergy.toLowerCase()),
