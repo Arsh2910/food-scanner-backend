@@ -12,7 +12,13 @@ const scanSchema = new mongoose.Schema(
 
     result: {
       safe: Boolean,
-      issues: [String],
+      issues: [
+        {
+          type: { type: String },
+          item: String,
+          reason: String,
+        },
+      ],
       summary: String,
       confidence: {
         type: Number,
