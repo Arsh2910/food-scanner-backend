@@ -35,23 +35,26 @@ User Profile:
 Age: ${user.age}
 Gender: ${user.gender}
 Diet: ${user.diet}
-Allergies: ${user.allergies.join(", ")}
-Avoid: ${user.avoid.join(", ")}
-Health Issues: ${user.healthIssues.join(", ")}
+Allergies: ${user.allergies.join(", ") || "None"}
+Avoid: ${user.avoid.join(", ") || "None"}
+Health Issues: ${user.healthIssues.join(", ") || "None"}
 
 Ingredients:
 ${ingredients.join(", ")}
 
 Analyze these ingredients for this user.
 
-If the product is unsafe, suggest 3 SAFER REAL-WORLD BRANDED ALTERNATIVES of the same product type.
+If the product is unsafe, suggest 3 SAFER REAL-WORLD BRANDED ALTERNATIVES commonly available in India or internationally.
 
 IMPORTANT:
-- Do NOT wrap the JSON in markdown.
+- Return ONLY raw JSON.
+- Do NOT wrap in markdown.
 - Do NOT include explanations outside JSON.
-- Return RAW JSON only.
+- Response must be directly parseable by JSON.parse().
 
-Return ONLY valid JSON in this format:
+If product is SAFE, alternatives array must be empty.
+
+Return JSON in this format:
 
 {
   "safe": true or false,
@@ -74,16 +77,15 @@ Return ONLY valid JSON in this format:
     const response = await result.response;
     const text = response.text();
 
-    console.log("RAW AI RESPONSE:");
-    console.log(text);
+    console.log("RAW AI RESPONSE:", text);
 
-    // 🔥 Extract JSON safely (handles markdown + extra text)
-    const match = text.match(/```json\s*([\s\S]*?)\s*```/i);
-
+    // Extract JSON safely
     let jsonString;
 
-    if (match) {
-      jsonString = match[1];
+    const markdownMatch = text.match(/```json\s*([\s\S]*?)\s*```/i);
+
+    if (markdownMatch) {
+      jsonString = markdownMatch[1];
     } else {
       const fallback = text.match(/\{[\s\S]*\}/);
       if (!fallback) {
@@ -106,11 +108,11 @@ Return ONLY valid JSON in this format:
       });
     }
 
-    // 🔥 Normalize AI output (never trust AI structure blindly)
+    // 🔥 Normalize output safely
     parsed.safe = typeof parsed.safe === "boolean" ? parsed.safe : false;
 
-    parsed.confidence =
-      typeof parsed.confidence === "number" ? parsed.confidence : 50;
+    parsed.riskScore =
+      typeof parsed.riskScore === "number" ? parsed.riskScore : 50;
 
     parsed.issues = Array.isArray(parsed.issues) ? parsed.issues : [];
 
@@ -118,13 +120,18 @@ Return ONLY valid JSON in this format:
       ? parsed.alternatives
       : [];
 
-    parsed.riskLevel = ["low", "medium", "high"].includes(parsed.riskLevel)
-      ? parsed.riskLevel
+    parsed.severity = ["low", "medium", "high", "critical"].includes(
+      parsed.severity,
+    )
+      ? parsed.severity
       : "low";
 
-    // 🔥 Backend Risk Override Logic
-    let finalRisk = parsed.riskLevel;
+    parsed.healthImpact =
+      typeof parsed.healthImpact === "string" ? parsed.healthImpact : "";
 
+    parsed.summary = typeof parsed.summary === "string" ? parsed.summary : "";
+
+    // 🔥 Backend Severity Override Logic
     const issuesText = parsed.issues.join(" ").toLowerCase();
 
     const allergyMatch = user.allergies.some((allergy) =>
@@ -132,14 +139,24 @@ Return ONLY valid JSON in this format:
     );
 
     if (allergyMatch) {
-      finalRisk = "high";
-    } else if (!parsed.safe) {
-      finalRisk = "medium";
+      parsed.severity = "critical";
+      parsed.safe = false;
+    } else if (!parsed.safe && parsed.severity === "low") {
+      parsed.severity = "medium";
     }
 
-    parsed.riskLevel = finalRisk;
+    // 🔥 Ensure alternatives exist if unsafe
+    if (!parsed.safe && parsed.alternatives.length === 0) {
+      parsed.alternatives = [
+        {
+          name: "Search safer alternatives",
+          reason: "AI did not provide branded options.",
+          searchLink: `https://www.google.com/search?q=vegan+${ingredients[0]}+alternative`,
+        },
+      ];
+    }
 
-    console.log("FINAL PARSED RESULT:", parsed);
+    console.log("FINAL RESULT:", parsed);
 
     // 🔥 Save scan history
     await Scan.create({
