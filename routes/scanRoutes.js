@@ -19,8 +19,28 @@ router.post("/", protect, async (req, res) => {
     }
 
     const user = await User.findById(req.user);
+
     if (!user) {
       return res.status(404).json({ message: "User not found" });
+    }
+
+    // 🔥 Build dynamic evaluation conditions
+    const evaluationConditions = [];
+
+    if (user.diet) {
+      evaluationConditions.push({ category: "diet", name: user.diet });
+    }
+
+    if (user.allergies?.length) {
+      user.allergies.forEach((a) =>
+        evaluationConditions.push({ category: "allergy", name: a }),
+      );
+    }
+
+    if (user.healthIssues?.length) {
+      user.healthIssues.forEach((h) =>
+        evaluationConditions.push({ category: "health", name: h }),
+      );
     }
 
     const model = genAI.getGenerativeModel({
@@ -28,48 +48,53 @@ router.post("/", protect, async (req, res) => {
     });
 
     const prompt = `
-You are a food safety analysis system.
+You are a food safety analysis engine.
 
-User Profile:
-Age: ${user.age}
-Gender: ${user.gender}
-Diet: ${user.diet}
-Allergies: ${user.allergies.join(", ") || "None"}
-Avoid: ${user.avoid.join(", ") || "None"}
-Health Issues: ${user.healthIssues.join(", ") || "None"}
+Evaluate this product ONLY against these user conditions:
+${JSON.stringify(evaluationConditions, null, 2)}
 
 Ingredients:
 ${ingredients.join(", ")}
 
-Analyze these ingredients for this user.
+If unsafe, suggest ONLY REAL, EXISTING branded alternatives that:
+- Are from established brands
+- Are commonly available in India or internationally
+- Use exact commercial product names
+- DO NOT invent products
+- DO NOT invent brands
+- If unsure about real existence, return empty array
+- Only suggest if confidence >= 80%
 
-If the product is unsafe, suggest 3 SAFER REAL-WORLD BRANDED ALTERNATIVES commonly available in India or internationally.
+Return ONLY valid raw JSON.
 
-IMPORTANT:
-- Return ONLY raw JSON.
-- Do NOT wrap in markdown.
-- Do NOT include explanations outside JSON.
-- Response must be directly parseable by JSON.parse().
-
-If product is SAFE, alternatives array must be empty.
-
-Return JSON in this format:
+Format:
 
 {
   "safe": true or false,
   "riskScore": 0-100,
   "severity": "low | medium | high | critical",
-  "issues": [],
-  "healthImpact": "",
+  "verdicts": [
+    {
+      "category": "diet | allergy | health",
+      "name": "",
+      "status": "safe | warning | danger",
+      "reason": ""
+    }
+  ],
   "alternatives": [
     {
       "name": "",
+      "brand": "",
       "reason": "",
-      "searchLink": ""
+      "searchQuery": "",
+      "confidence": 0-100
     }
   ],
-  "summary": ""
+  "summary": "",
+  "detailedExplanation": ""
 }
+
+If safe = true, alternatives must be empty array.
 `;
 
     const result = await model.generateContent(prompt);
@@ -80,7 +105,6 @@ Return JSON in this format:
 
     // 🔥 Extract JSON safely
     let jsonString;
-
     const markdownMatch = text.match(/```json\s*([\s\S]*?)\s*```/i);
 
     if (markdownMatch) {
@@ -90,7 +114,7 @@ Return JSON in this format:
       if (!fallback) {
         return res.status(500).json({
           success: false,
-          message: "AI did not return valid JSON structure",
+          message: "AI did not return valid JSON",
         });
       }
       jsonString = fallback[0];
@@ -103,13 +127,12 @@ Return JSON in this format:
     } catch (err) {
       return res.status(500).json({
         success: false,
-        message: "Invalid AI response format",
+        message: "Invalid AI JSON format",
       });
     }
 
-    // 🔥 Normalize basic fields
+    // 🔥 Normalize
     parsed.safe = typeof parsed.safe === "boolean" ? parsed.safe : false;
-
     parsed.riskScore =
       typeof parsed.riskScore === "number" ? parsed.riskScore : 50;
 
@@ -119,65 +142,67 @@ Return JSON in this format:
       ? parsed.severity
       : "low";
 
-    parsed.issues = Array.isArray(parsed.issues) ? parsed.issues : [];
-
-    parsed.alternatives = Array.isArray(parsed.alternatives)
-      ? parsed.alternatives
+    parsed.verdicts = Array.isArray(parsed.verdicts)
+      ? parsed.verdicts.map((v) => ({
+          category: ["diet", "allergy", "health"].includes(v.category)
+            ? v.category
+            : "diet",
+          name: typeof v.name === "string" ? v.name : "",
+          status: ["safe", "warning", "danger"].includes(v.status)
+            ? v.status
+            : "warning",
+          reason: typeof v.reason === "string" ? v.reason : "",
+        }))
       : [];
 
-    parsed.healthImpact =
-      typeof parsed.healthImpact === "string" ? parsed.healthImpact : "";
+    // 🔥 Strict alternative filtering
+    parsed.alternatives = Array.isArray(parsed.alternatives)
+      ? parsed.alternatives
+          .filter(
+            (alt) =>
+              alt.name &&
+              alt.brand &&
+              alt.searchQuery &&
+              typeof alt.confidence === "number" &&
+              alt.confidence >= 80,
+          )
+          .map((alt) => ({
+            name: alt.name,
+            brand: alt.brand,
+            reason: alt.reason || "",
+            searchLink: `https://www.google.com/search?q=${encodeURIComponent(
+              alt.searchQuery,
+            )}`,
+          }))
+      : [];
 
     parsed.summary = typeof parsed.summary === "string" ? parsed.summary : "";
 
-    // 🔥 Normalize issues into structured format FIRST
-    parsed.issues = parsed.issues.map((issue) => {
-      if (typeof issue === "string") {
-        return {
-          type: "General",
-          item: "Unknown",
-          reason: issue,
-        };
+    parsed.detailedExplanation =
+      typeof parsed.detailedExplanation === "string"
+        ? parsed.detailedExplanation
+        : "";
+
+    // 🔥 Allergy hard override (non-AI safety net)
+    const ingredientText = ingredients.join(" ").toLowerCase();
+
+    user.allergies?.forEach((allergy) => {
+      if (ingredientText.includes(allergy.toLowerCase())) {
+        parsed.safe = false;
+        parsed.severity = "critical";
+
+        parsed.verdicts.push({
+          category: "allergy",
+          name: allergy,
+          status: "danger",
+          reason: `Contains ${allergy}`,
+        });
       }
-
-      return {
-        type: issue.type || "General",
-        item: issue.item || "Unknown",
-        reason: issue.reason || "No reason provided",
-      };
     });
-
-    // 🔥 Backend Severity Override Logic
-    const issuesText = parsed.issues
-      .map((i) => i.reason)
-      .join(" ")
-      .toLowerCase();
-
-    const allergyMatch = user.allergies.some((allergy) =>
-      issuesText.includes(allergy.toLowerCase()),
-    );
-
-    if (allergyMatch) {
-      parsed.severity = "critical";
-      parsed.safe = false;
-    } else if (!parsed.safe && parsed.severity === "low") {
-      parsed.severity = "medium";
-    }
-
-    // 🔥 Ensure alternatives exist if unsafe
-    if (!parsed.safe && parsed.alternatives.length === 0) {
-      parsed.alternatives = [
-        {
-          name: "Search safer alternatives",
-          reason: "AI did not provide branded options.",
-          searchLink: `https://www.google.com/search?q=vegan+${ingredients[0]}+alternative`,
-        },
-      ];
-    }
 
     console.log("FINAL RESULT:", parsed);
 
-    // 🔥 Save scan history
+    // 🔥 Save history
     await Scan.create({
       user: user._id,
       ingredients,
@@ -194,7 +219,7 @@ Return JSON in this format:
   }
 });
 
-// 🔥 History Endpoint
+// 🔥 History endpoint
 router.get("/history", protect, async (req, res) => {
   try {
     const scans = await Scan.find({ user: req.user }).sort({ createdAt: -1 });
