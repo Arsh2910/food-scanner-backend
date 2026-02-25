@@ -24,7 +24,7 @@ router.post("/", protect, async (req, res) => {
       return res.status(404).json({ message: "User not found" });
     }
 
-    // 🔥 Build dynamic evaluation conditions
+    // 🔥 Build evaluation conditions dynamically
     const evaluationConditions = [];
 
     if (user.diet) {
@@ -48,26 +48,33 @@ router.post("/", protect, async (req, res) => {
     });
 
     const prompt = `
-You are a food safety analysis engine.
+You are a structured food safety analysis engine.
 
-Evaluate this product ONLY against these user conditions:
+Evaluate ONLY against:
 ${JSON.stringify(evaluationConditions, null, 2)}
 
 Ingredients:
 ${ingredients.join(", ")}
 
-If unsafe, suggest ONLY REAL, EXISTING branded alternatives that:
-- Are from established brands
-- Are commonly available in India or internationally
-- Use exact commercial product names
-- DO NOT invent products
-- DO NOT invent brands
-- If unsure about real existence, return empty array
-- Only suggest if confidence >= 80%
+STRICT RULES:
+- Do NOT introduce new evaluation categories.
+- Only evaluate the listed user conditions.
+- If no issue exists, mark that condition as "safe".
+- Keep summary to maximum 2 short sentences.
+- Keep detailedExplanation to maximum 4 short sentences.
+- Do NOT reference regulatory bodies.
+- Avoid academic tone.
+- Total explanation must not exceed 100 words.
 
-Return ONLY valid raw JSON.
+ALTERNATIVES RULES:
+- Only suggest REAL existing branded products.
+- Must be established brands.
+- Must be commonly available (India or international).
+- Do NOT invent products.
+- If unsure → return empty array.
+- Only include if confidence >= 80%.
 
-Format:
+Return ONLY valid JSON:
 
 {
   "safe": true or false,
@@ -94,14 +101,12 @@ Format:
   "detailedExplanation": ""
 }
 
-If safe = true, alternatives must be empty array.
+If safe = true → alternatives must be [].
 `;
 
     const result = await model.generateContent(prompt);
     const response = await result.response;
     const text = response.text();
-
-    console.log("RAW AI RESPONSE:", text);
 
     // 🔥 Extract JSON safely
     let jsonString;
@@ -131,7 +136,7 @@ If safe = true, alternatives must be empty array.
       });
     }
 
-    // 🔥 Normalize
+    // 🔥 Normalize fields
     parsed.safe = typeof parsed.safe === "boolean" ? parsed.safe : false;
     parsed.riskScore =
       typeof parsed.riskScore === "number" ? parsed.riskScore : 50;
@@ -183,7 +188,7 @@ If safe = true, alternatives must be empty array.
         ? parsed.detailedExplanation
         : "";
 
-    // 🔥 Allergy hard override (non-AI safety net)
+    // 🔥 Allergy override safety net
     const ingredientText = ingredients.join(" ").toLowerCase();
 
     user.allergies?.forEach((allergy) => {
@@ -200,9 +205,7 @@ If safe = true, alternatives must be empty array.
       }
     });
 
-    console.log("FINAL RESULT:", parsed);
-
-    // 🔥 Save history
+    // 🔥 Save scan history
     await Scan.create({
       user: user._id,
       ingredients,
@@ -219,7 +222,6 @@ If safe = true, alternatives must be empty array.
   }
 });
 
-// 🔥 History endpoint
 router.get("/history", protect, async (req, res) => {
   try {
     const scans = await Scan.find({ user: req.user }).sort({ createdAt: -1 });
@@ -229,7 +231,6 @@ router.get("/history", protect, async (req, res) => {
       history: scans,
     });
   } catch (error) {
-    console.error("HISTORY ERROR:", error);
     res.status(500).json({
       message: "Failed to fetch history",
     });
