@@ -7,6 +7,7 @@ const { GoogleGenerativeAI } = require("@google/generative-ai");
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
+// 🔥 CREATE SCAN
 router.post("/", protect, async (req, res) => {
   try {
     const { ingredients } = req.body;
@@ -24,7 +25,6 @@ router.post("/", protect, async (req, res) => {
       return res.status(404).json({ message: "User not found" });
     }
 
-    // 🔥 Build evaluation conditions dynamically
     const evaluationConditions = [];
 
     if (user.diet) {
@@ -57,24 +57,20 @@ Ingredients:
 ${ingredients.join(", ")}
 
 STRICT RULES:
-- Do NOT introduce new evaluation categories.
-- Only evaluate the listed user conditions.
-- If no issue exists, mark that condition as "safe".
-- Keep summary to maximum 2 short sentences.
-- Keep detailedExplanation to maximum 4 short sentences.
-- Do NOT reference regulatory bodies.
-- Avoid academic tone.
-- Total explanation must not exceed 100 words.
+- Only evaluate listed conditions.
+- No new categories.
+- If no issue, mark as "safe".
+- Keep summary max 2 sentences.
+- Keep detailedExplanation max 4 sentences.
+- No academic tone.
 
-ALTERNATIVES RULES:
-- Only suggest REAL existing branded products.
-- Must be established brands.
-- Must be commonly available (India or international).
-- Do NOT invent products.
-- If unsure → return empty array.
-- Only include if confidence >= 80%.
+ALTERNATIVES:
+- Only REAL branded products.
+- Established brands only.
+- If unsure → empty array.
+- Only if confidence >= 80%.
 
-Return ONLY valid JSON:
+Return ONLY valid JSON.
 
 {
   "safe": true or false,
@@ -105,10 +101,8 @@ If safe = true → alternatives must be [].
 `;
 
     const result = await model.generateContent(prompt);
-    const response = await result.response;
-    const text = response.text();
+    const text = result.response.text();
 
-    // 🔥 Extract JSON safely
     let jsonString;
     const markdownMatch = text.match(/```json\s*([\s\S]*?)\s*```/i);
 
@@ -125,18 +119,9 @@ If safe = true → alternatives must be [].
       jsonString = fallback[0];
     }
 
-    let parsed;
+    let parsed = JSON.parse(jsonString);
 
-    try {
-      parsed = JSON.parse(jsonString);
-    } catch (err) {
-      return res.status(500).json({
-        success: false,
-        message: "Invalid AI JSON format",
-      });
-    }
-
-    // 🔥 Normalize fields
+    // 🔥 Normalize
     parsed.safe = typeof parsed.safe === "boolean" ? parsed.safe : false;
     parsed.riskScore =
       typeof parsed.riskScore === "number" ? parsed.riskScore : 50;
@@ -147,20 +132,8 @@ If safe = true → alternatives must be [].
       ? parsed.severity
       : "low";
 
-    parsed.verdicts = Array.isArray(parsed.verdicts)
-      ? parsed.verdicts.map((v) => ({
-          category: ["diet", "allergy", "health"].includes(v.category)
-            ? v.category
-            : "diet",
-          name: typeof v.name === "string" ? v.name : "",
-          status: ["safe", "warning", "danger"].includes(v.status)
-            ? v.status
-            : "warning",
-          reason: typeof v.reason === "string" ? v.reason : "",
-        }))
-      : [];
+    parsed.verdicts = Array.isArray(parsed.verdicts) ? parsed.verdicts : [];
 
-    // 🔥 Strict alternative filtering
     parsed.alternatives = Array.isArray(parsed.alternatives)
       ? parsed.alternatives
           .filter(
@@ -174,21 +147,17 @@ If safe = true → alternatives must be [].
           .map((alt) => ({
             name: alt.name,
             brand: alt.brand,
-            reason: alt.reason || "",
+            reason: alt.reason,
             searchLink: `https://www.google.com/search?q=${encodeURIComponent(
               alt.searchQuery,
             )}`,
           }))
       : [];
 
-    parsed.summary = typeof parsed.summary === "string" ? parsed.summary : "";
+    parsed.summary = parsed.summary || "";
+    parsed.detailedExplanation = parsed.detailedExplanation || "";
 
-    parsed.detailedExplanation =
-      typeof parsed.detailedExplanation === "string"
-        ? parsed.detailedExplanation
-        : "";
-
-    // 🔥 Allergy override safety net
+    // 🔥 Allergy hard override
     const ingredientText = ingredients.join(" ").toLowerCase();
 
     user.allergies?.forEach((allergy) => {
@@ -205,14 +174,18 @@ If safe = true → alternatives must be [].
       }
     });
 
-    // 🔥 Save scan history
-    await Scan.create({
+    const savedScan = await Scan.create({
       user: user._id,
       ingredients,
       result: parsed,
+      isSaved: false,
     });
 
-    res.json(parsed);
+    res.json({
+      ...parsed,
+      scanId: savedScan._id, // 👈 important for save toggle
+      isSaved: false,
+    });
   } catch (error) {
     console.error("SCAN ERROR:", error);
     res.status(500).json({
@@ -222,6 +195,7 @@ If safe = true → alternatives must be [].
   }
 });
 
+// 🔥 HISTORY
 router.get("/history", protect, async (req, res) => {
   try {
     const scans = await Scan.find({ user: req.user }).sort({ createdAt: -1 });
@@ -233,6 +207,56 @@ router.get("/history", protect, async (req, res) => {
   } catch (error) {
     res.status(500).json({
       message: "Failed to fetch history",
+    });
+  }
+});
+
+// 🔥 TOGGLE SAVE
+router.put("/save/:id", protect, async (req, res) => {
+  try {
+    const scan = await Scan.findOne({
+      _id: req.params.id,
+      user: req.user,
+    });
+
+    if (!scan) {
+      return res.status(404).json({
+        success: false,
+        message: "Scan not found",
+      });
+    }
+
+    scan.isSaved = !scan.isSaved;
+    await scan.save();
+
+    res.json({
+      success: true,
+      isSaved: scan.isSaved,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Failed to toggle save",
+    });
+  }
+});
+
+// 🔥 GET SAVED
+router.get("/saved", protect, async (req, res) => {
+  try {
+    const savedScans = await Scan.find({
+      user: req.user,
+      isSaved: true,
+    }).sort({ createdAt: -1 });
+
+    res.json({
+      success: true,
+      saved: savedScans,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch saved scans",
     });
   }
 });
