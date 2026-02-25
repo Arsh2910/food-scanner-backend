@@ -61,6 +61,25 @@ router.post("/", protect, async (req, res) => {
         duplicate: true,
       });
     }
+    const crypto = require("crypto");
+
+    const ingredientString = normalizedIngredients.join(",");
+    const ingredientHash = crypto
+      .createHash("sha256")
+      .update(ingredientString)
+      .digest("hex");
+    const cachedScan = await Scan.findOne({
+      ingredientHash,
+    });
+
+    if (cachedScan) {
+      return res.json({
+        ...cachedScan.result,
+        scanId: cachedScan._id,
+        isSaved: false,
+        cached: true,
+      });
+    }
     const model = genAI.getGenerativeModel({
       model: "gemini-2.5-flash",
     });
@@ -216,16 +235,27 @@ If safe = true → alternatives must be [].
 // 🔥 HISTORY
 router.get("/history", protect, async (req, res) => {
   try {
-    const scans = await Scan.find({ user: req.user }).sort({ createdAt: -1 });
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+
+    const skip = (page - 1) * limit;
+
+    const scans = await Scan.find({ user: req.user })
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit);
+
+    const total = await Scan.countDocuments({ user: req.user });
 
     res.json({
       success: true,
+      page,
+      totalPages: Math.ceil(total / limit),
+      totalItems: total,
       history: scans,
     });
   } catch (error) {
-    res.status(500).json({
-      message: "Failed to fetch history",
-    });
+    res.status(500).json({ message: "Failed to fetch history" });
   }
 });
 
@@ -278,5 +308,30 @@ router.get("/saved", protect, async (req, res) => {
     });
   }
 });
+// 🔥 Delete Scan
+router.delete("/:id", protect, async (req, res) => {
+  try {
+    const scan = await Scan.findOneAndDelete({
+      _id: req.params.id,
+      user: req.user,
+    });
 
+    if (!scan) {
+      return res.status(404).json({
+        success: false,
+        message: "Scan not found",
+      });
+    }
+
+    res.json({
+      success: true,
+      message: "Scan deleted successfully",
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Failed to delete scan",
+    });
+  }
+});
 module.exports = router;
