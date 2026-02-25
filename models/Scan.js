@@ -9,10 +9,7 @@ const scanSchema = new mongoose.Schema(
     },
 
     ingredients: [String],
-    ingredientHash: {
-      type: String,
-      index: true,
-    },
+
     result: {
       safe: Boolean,
       issues: [String],

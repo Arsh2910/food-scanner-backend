@@ -14,16 +14,7 @@ const app = express();
 
 app.use(cors());
 app.use(express.json());
-const scanLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 30,
-  message: {
-    success: false,
-    message: "Too many scan requests. Try again later.",
-  },
-});
 
-app.use("/api/scan", scanLimiter);
 app.use("/api/users", userRoutes);
 app.use("/api/ingredients", ingredientRoutes);
 app.use("/api/scan", scanRoutes);
