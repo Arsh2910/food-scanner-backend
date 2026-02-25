@@ -11,7 +11,7 @@ const connectDB = require("./config/db");
 const userRoutes = require("./routes/userRoutes");
 
 const app = express();
-
+app.set("trust proxy", 1);
 // 🔥 Connect DB FIRST
 connectDB();
 
