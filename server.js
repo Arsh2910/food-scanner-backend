@@ -12,14 +12,14 @@ const userRoutes = require("./routes/userRoutes");
 
 const app = express();
 app.set("trust proxy", 1);
-// 🔥 Connect DB FIRST
+
 connectDB();
 
-// 🔥 Middlewares
+//  Middlewares
 app.use(cors());
 app.use(express.json());
 
-// 🔥 Rate Limiter for Scan (protect Gemini API)
+//  Rate Limiter for Scan 
 const scanLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 30, // 30 scan requests per 15 min per IP
@@ -29,15 +29,15 @@ const scanLimiter = rateLimit({
   },
 });
 
-// 🔥 Routes
+//  Routes
 app.use("/api/users", userRoutes);
 app.use("/api/ingredients", ingredientRoutes);
 
-// 👇 Apply limiter ONLY to scan route
+//  Apply limiter ONLY to scan route
 app.use("/api/scan", scanLimiter, scanRoutes);
 
 app.get("/", (req, res) => {
-  res.send("Food Scanner Backend Running 🚀");
+  res.send("Food Scanner Backend Running ");
 });
 
 app.listen(PORT, () => {
