@@ -213,7 +213,8 @@ If safe = true → alternatives must be [].
 
     const savedScan = await Scan.create({
       user: user._id,
-      ingredients,
+      ingredients: normalizedIngredients, // 🔥 SAVE NORMALIZED
+
       result: parsed,
       isSaved: false,
     });
