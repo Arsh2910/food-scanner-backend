@@ -7,7 +7,7 @@ const { GoogleGenerativeAI } = require("@google/generative-ai");
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-// 🔥 CREATE SCAN
+//  CREATE SCAN
 router.post("/", protect, async (req, res) => {
   try {
     const { ingredients } = req.body;
@@ -42,12 +42,12 @@ router.post("/", protect, async (req, res) => {
         evaluationConditions.push({ category: "health", name: h }),
       );
     }
-    // 🔥 Normalize ingredients (important for matching)
+    // Normalize ingredients (important for matching)
     const normalizedIngredients = ingredients
       .map((i) => i.trim().toLowerCase())
       .sort();
 
-    // 🔥 Check duplicate scan
+    //  Check duplicate scan
     const existingScan = await Scan.findOne({
       user: user._id,
       ingredients: normalizedIngredients,
@@ -158,7 +158,7 @@ If safe = true → alternatives must be [].
 
     let parsed = JSON.parse(jsonString);
 
-    // 🔥 Normalize
+    //  Normalize
     parsed.safe = typeof parsed.safe === "boolean" ? parsed.safe : false;
     parsed.riskScore =
       typeof parsed.riskScore === "number" ? parsed.riskScore : 50;
@@ -194,7 +194,7 @@ If safe = true → alternatives must be [].
     parsed.summary = parsed.summary || "";
     parsed.detailedExplanation = parsed.detailedExplanation || "";
 
-    // 🔥 Allergy hard override
+    //  Allergy hard override
     const ingredientText = ingredients.join(" ").toLowerCase();
 
     user.allergies?.forEach((allergy) => {
@@ -213,15 +213,14 @@ If safe = true → alternatives must be [].
 
     const savedScan = await Scan.create({
       user: user._id,
-      ingredients: normalizedIngredients, // 🔥 SAVE NORMALIZED
-
+      ingredients: normalizedIngredients,
       result: parsed,
       isSaved: false,
     });
 
     res.json({
       ...parsed,
-      scanId: savedScan._id, // 👈 important for save toggle
+      scanId: savedScan._id, 
       isSaved: false,
     });
   } catch (error) {
@@ -233,7 +232,7 @@ If safe = true → alternatives must be [].
   }
 });
 
-// 🔥 HISTORY
+//  HISTORY
 router.get("/history", protect, async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
@@ -260,7 +259,7 @@ router.get("/history", protect, async (req, res) => {
   }
 });
 
-// 🔥 TOGGLE SAVE
+//  TOGGLE SAVE
 router.put("/save/:id", protect, async (req, res) => {
   try {
     const scan = await Scan.findOne({
@@ -290,7 +289,7 @@ router.put("/save/:id", protect, async (req, res) => {
   }
 });
 
-// 🔥 GET SAVED
+//  GET SAVED
 router.get("/saved", protect, async (req, res) => {
   try {
     const savedScans = await Scan.find({
@@ -309,7 +308,7 @@ router.get("/saved", protect, async (req, res) => {
     });
   }
 });
-// 🔥 Delete Scan
+//  Delete Scan
 router.delete("/:id", protect, async (req, res) => {
   try {
     const scan = await Scan.findOneAndDelete({
